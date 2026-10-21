@@ -36,8 +36,11 @@ COLUMN_ALIASES = {
     "phone": ["phone", "business phone", "telephone", "phone number"],
     "license": ["license number", "license no", "license #", "licensenumber", "lic number", "license"],
     "status": ["license status", "primary status", "status"],
-    "classification": ["classifications", "classification", "license class", "class code", "class", "license type"],
+    "classification": ["classifications", "classification", "license class", "class code", "class", "license type", "services"],
+    "email": ["email address", "email", "e mail"],
 }
+# Words that disqualify a column from matching a field by 'contains' (e.g. "License Verified/Deliver/Ship" is not the license number)
+ALIAS_EXCLUDE = {"license": ("verified", "date", "expir", "status", "type", "class", "deliver", "ship")}
 
 # Known national / big names (lower-case, matched inside the company name). Add your own.
 NATIONAL_BLOCKLIST = [
