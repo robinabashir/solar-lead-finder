@@ -120,7 +120,7 @@ def first_acceptable(cands, sh):
 
 
 def find_email(rec, domain, pages, owner, sh, snips_ok=True):
-    """Source chain: 1 own site, 2 directories, 3 Wayback, 4 search for the domain's emails.
+    """Source chain: 1 own site, 2 email on the license record, 3 directories, 4 Wayback, 5 search for the domain's emails.
     Stops at the first source that gives an email that passes verification."""
     raw = " ".join(h for _, h in pages)
     cands = []
@@ -131,6 +131,11 @@ def find_email(rec, domain, pages, owner, sh, snips_ok=True):
     if hit:
         proof = next((u for a, _, u in cands if a == hit[0]), pages[0][0])
         return hit + ("own site", proof)
+    lic_email = (rec.get("email") or "").strip().lower()
+    if lic_email:
+        hit = first_acceptable(ordered_candidates([(lic_email, 0)], owner, "", domain), sh)
+        if hit:
+            return hit + ("license record", "state license list")
     dir_emails = [e for e in sh.dir_index.get(domain, [])]
     if dir_emails:
         hit = first_acceptable(ordered_candidates([(e, 0) for e in dir_emails], owner, "", domain), sh)
