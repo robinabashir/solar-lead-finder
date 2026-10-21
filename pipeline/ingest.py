@@ -6,7 +6,7 @@ import re
 from . import config
 
 MASTER_COLUMNS = ["key", "state", "license", "company", "owner", "address", "city", "zip",
-                  "county", "phone", "classification", "status", "rank", "multistate"]
+                  "county", "phone", "email", "classification", "status", "rank", "multistate"]
 
 
 def _norm(h):
@@ -30,7 +30,8 @@ def find_columns(headers):
         if idx is None:
             for a in aliases:                  # contains
                 for i, h in enumerate(norm):
-                    if h and a in h and i not in found.values():
+                    bad = config.ALIAS_EXCLUDE.get(field, ())
+                    if h and a in h and i not in found.values() and not any(b in h for b in bad):
                         idx = i
                         break
                 if idx is not None:
@@ -83,6 +84,12 @@ def clean_city(c):
     c = re.sub(r"\s+[A-Z]{2}\s+\d{5}(-\d{4})?$", "", c)
     c = re.sub(r"\s+\d{5}(-\d{4})?$", "", c)
     return c.strip().title()
+
+
+def extract_license(text):
+    """'Solar (CVC57035)' -> 'CVC57035'"""
+    m = re.search(r"\b([A-Z]{1,4}-?\d{4,})\b", str(text or ""))
+    return m.group(1) if m else ""
 
 
 def clean_phone(p):
@@ -165,16 +172,25 @@ def load_licenses(path, state):
             continue
         if not is_active(get(row, "status")):
             continue
+        lic = get(row, "license")
+        if not re.search(r"\d{4,}", lic):                     # column is not a real license number
+            lic = extract_license(get(row, "classification")) or extract_license(" ".join(row))
+        raw_city = get(row, "city")
+        zip5 = re.sub(r"\D", "", get(row, "zip"))[:5]
+        if not zip5:
+            m = re.search(r"\b(\d{5})(?:-\d{4})?\b", raw_city)
+            zip5 = m.group(1) if m else ""
         rec = {
             "state": state,
-            "license": get(row, "license"),
+            "license": lic,
             "company": company,
             "owner": flip_name(get(row, "owner")) if get(row, "owner").lower() != company.lower() else "",
             "address": get(row, "address"),
-            "city": clean_city(get(row, "city")),
-            "zip": get(row, "zip")[:5],
+            "city": clean_city(raw_city),
+            "zip": zip5,
             "county": get(row, "county").title().replace(" County", ""),
             "phone": clean_phone(get(row, "phone")),
+            "email": get(row, "email").strip().lower() if "@" in get(row, "email") else "",
             "classification": get(row, "classification"),
             "status": get(row, "status"),
         }
