@@ -1,0 +1,3 @@
+# One big-company name per line (lower case). Paste names from Solar Power World top lists, etc.
+sunrun
+tesla energy

@@ -1,0 +1,23 @@
+name: Build master company list
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python build_master.py
+      - run: python -m pipeline.directories
+      - name: Save the lists
+        run: |
+          git config user.name "lead-finder"
+          git config user.email "lead-finder@users.noreply.github.com"
+          git add data/master.csv data/dir_index.json
+          git commit -m "Update master list and directory index" || echo "nothing to commit"
+          git push

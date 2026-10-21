@@ -1,0 +1,12 @@
+area_id,area_name,state,counties,cities,sample_ready
+TPA,Tampa Bay,FL,Hillsborough;Pinellas;Pasco,Tampa;Brandon;Clearwater;St. Petersburg;Largo;Riverview,yes
+MIA,Miami Metro,FL,Miami-Dade;Broward;Palm Beach,Miami;Fort Lauderdale;West Palm Beach;Hialeah;Boca Raton,yes
+ORL,Orlando Metro,FL,Orange;Osceola;Seminole,Orlando;Kissimmee;Sanford;Apopka,yes
+PHX,Phoenix Metro,AZ,Maricopa;Pinal,Phoenix;Mesa;Chandler;Scottsdale;Gilbert;Tempe;Glendale,yes
+TUC,Tucson Metro,AZ,Pima,Tucson;Oro Valley;Marana;Sahuarita,yes
+HOU,Houston,TX,Harris;Fort Bend;Montgomery,Houston;Sugar Land;Katy;Pearland;Spring;The Woodlands,yes
+DAL,Dallas Metro,TX,Dallas;Tarrant;Collin;Denton,Dallas;Fort Worth;Arlington;Plano;Irving;Frisco,yes
+ATX,Austin Metro,TX,Travis;Williamson;Hays,Austin;Round Rock;Cedar Park;Georgetown;San Marcos,yes
+LAX,Los Angeles Metro,CA,Los Angeles;Orange,Los Angeles;Long Beach;Anaheim;Irvine;Glendale;Pasadena,yes
+SDG,San Diego Metro,CA,San Diego,San Diego;Chula Vista;Oceanside;Escondido;Carlsbad,yes
+SFO,Bay Area / San Jose,CA,Santa Clara;Alameda;San Mateo;Contra Costa;San Francisco,San Jose;San Francisco;Oakland;Fremont;Sunnyvale,yes

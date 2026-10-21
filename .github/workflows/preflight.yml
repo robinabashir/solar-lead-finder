@@ -1,0 +1,20 @@
+name: Preflight check
+on:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - env:
+          GAS_WEBHOOK_URL: ${{ secrets.GAS_WEBHOOK_URL }}
+          SECRET_TOKEN: ${{ secrets.SECRET_TOKEN }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          STATES: ${{ vars.STATES || 'CA,FL,TX,AZ' }}
+        run: python preflight.py
