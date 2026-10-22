@@ -64,31 +64,71 @@ def reject(row, why):
     return row
 
 
-def find_site(rec, sh):
-    """Guess domains first (free), then one search that also returns revenue/employee snippets."""
-    weak, tried = None, set()
+FREE_MAIL = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "mac.com", "me.com",
+             "msn.com", "live.com", "comcast.net", "sbcglobal.net", "att.net", "verizon.net", "bellsouth.net",
+             "cox.net", "protonmail.com", "ymail.com", "gmx.com", "earthlink.net", "charter.net"}
 
-    def check(base, source, snips):
-        nonlocal weak
-        html = web.fetch(base)
+
+def digits10(x):
+    d = "".join(c for c in str(x or "") if c.isdigit())
+    return d[-10:] if len(d) >= 10 else ""
+
+
+def find_site(rec, sh):
+    """Find the company's website. Order: domain of the email on the license record, guessed domains (free),
+    Google Business Profile (website + phone, 1 credit), normal Google search (1 credit).
+    Returns (site or None, diag). site = (base, html, source, identity, snippets, reviews)."""
+    diag = {"tried": 0, "fetch_failed": 0, "no_match": 0, "places": 0, "search": 0}
+    weak, tried = [None], set()
+
+    def check(base, source, snips, place_ok=False, reviews=0):
+        diag["tried"] += 1
+        domain = web.domain_of(base)
+        html, ok_base = web.fetch_any(base)
         if not html:
+            diag["fetch_failed"] += 1
             return None
-        ident = web.identity(web.text_of(html), rec)
+        ident = web.identity(web.text_of(html), rec, domain)
+        if place_ok:
+            ident["level"] = "strong"                      # Google's own listing matches phone or ZIP
         if ident["level"] == "strong":
-            return (base, html, source, ident, snips)
-        if ident["level"] == "weak" and weak is None:
-            weak = (base, html, source, ident, snips)
+            return (ok_base or base, html, source, ident, snips, reviews)
+        if ident["level"] == "weak" and weak[0] is None:
+            weak[0] = (ok_base or base, html, source, ident, snips, reviews)
+            return None
+        diag["no_match"] += 1
         return None
 
+    ld = (rec.get("email") or "").split("@")[-1].lower()
+    if ld and ld not in FREE_MAIL:
+        tried.add(ld)
+        hit = check("https://" + ld, "license email domain", [])
+        if hit:
+            return hit, diag
     for d in web.guess_domains(rec["company"]):
         if d in tried or not web.resolves(d):
             continue
         tried.add(d)
         hit = check("https://" + d, "guess", [])
         if hit:
-            return hit
+            return hit, diag
+    if sh.has_credit():
+        for pl in sh.searcher.places(rec)[:3]:
+            diag["places"] += 1
+            if not pl["website"]:
+                continue
+            d = web.domain_of(pl["website"])
+            if d in tried or any(d == x or d.endswith("." + x) for x in config.DIRECTORY_DOMAINS):
+                continue
+            tried.add(d)
+            zip_ok = bool(rec.get("zip")) and rec["zip"] in pl["address"]
+            phone_ok = len(rec.get("phone", "")) == 10 and digits10(pl["phone"]) == rec["phone"]
+            hit = check(web.base_url(pl["website"]), "google business profile", [], zip_ok or phone_ok, pl["reviews"])
+            if hit:
+                return hit, diag
     if sh.has_credit():
         sites, snips = sh.searcher.company_query(rec)
+        diag["search"] = len(sites)
         for base in sites:
             d = web.domain_of(base)
             if d in tried:
@@ -96,8 +136,13 @@ def find_site(rec, sh):
             tried.add(d)
             hit = check(base, "search", snips)
             if hit:
-                return hit
-    return weak
+                return hit, diag
+    return weak[0], diag
+
+
+def diag_text(d):
+    return (f"no website found (tried {d['tried']}, page unreachable {d['fetch_failed']}, "
+            f"not this company {d['no_match']}, Google listings {d['places']}, search results {d['search']})")
 
 
 def ordered_candidates(emails, owner, raw, domain):
@@ -119,18 +164,35 @@ def first_acceptable(cands, sh):
     return None
 
 
-def find_email(rec, domain, pages, owner, sh, snips_ok=True):
-    """Source chain: 1 own site, 2 email on the license record, 3 directories, 4 Wayback, 5 search for the domain's emails.
-    Stops at the first source that gives an email that passes verification."""
+def find_email(rec, domain, pages, owner, sh):
+    """Owner email first. Order: (1) owner-labelled email on the site, (2) owner name + common address patterns,
+    accepted ONLY if the mailbox is verified, (3) any email on the site, (4) email on the license record,
+    (5) directories, (6) Wayback copies, (7) a search for the domain's emails."""
     raw = " ".join(h for _, h in pages)
     cands = []
     for url, h in pages:
         for a, pos in web.extract_emails(h):
             cands.append((a, pos, url))
-    hit = first_acceptable(ordered_candidates([(a, p) for a, p, _ in cands], owner, raw, domain), sh)
+    ordered = ordered_candidates([(a, p) for a, p, _ in cands], owner, raw, domain)
+
+    def proof_for(addr):
+        return next((u for a, _, u in cands if a == addr), pages[0][0])
+
+    hit = first_acceptable([c for c in ordered if c[1] == "owner"], sh)
     if hit:
-        proof = next((u for a, _, u in cands if a == hit[0]), pages[0][0])
-        return hit + ("own site", proof)
+        return hit + ("own site", proof_for(hit[0]))
+    if owner and sh.verifier.mode == "smtp":
+        for addr in web.email_patterns(owner, domain)[:8]:
+            if addr in sh.bounces:
+                continue
+            st = sh.verifier.status(addr)
+            if st == "verified":
+                return (addr, "owner", "verified", "name pattern, mailbox verified", "mailbox check")
+            if st in ("catch_all", "published_only"):
+                break                                  # this domain cannot be tested: stop guessing
+    hit = first_acceptable(ordered, sh)
+    if hit:
+        return hit + ("own site", proof_for(hit[0]))
     lic_email = (rec.get("email") or "").strip().lower()
     if lic_email:
         hit = first_acceptable(ordered_candidates([(lic_email, 0)], owner, "", domain), sh)
@@ -167,10 +229,10 @@ def process(rec, area, sh):
     name = rec["company"].lower()
     if any(b in name for b in config.NATIONAL_BLOCKLIST):
         return reject(row, "national name")
-    site = find_site(rec, sh)
+    site, diag = find_site(rec, sh)
     if not site:
-        return reject(row, "no website found")
-    base, home_html, source, ident, snips = site
+        return reject(row, diag_text(diag))
+    base, home_html, source, ident, snips, reviews = site
     domain = web.domain_of(base)
     with sh.lock:
         if domain in sh.seen_domains:
@@ -196,7 +258,11 @@ def process(rec, area, sh):
     if wev:
         ev += "; " + wev
     owner = web.extract_owner(text) or rec.get("owner", "")
+    if not owner and sh.has_credit():                      # ask Google who owns it
+        owner = web.owner_from_snippets(sh.searcher.owner_query(rec), rec["company"])
     pts, tier, why_score = web.score(text, has_team)
+    if reviews:
+        why_score = (why_score + f"; {reviews} Google reviews").strip("; ")
     row.update({"Website": base, "Owner Name": owner, "Score": pts, "Tier": tier, "Area Evidence": ev,
                 "Notes": why_score})
     got = find_email(rec, domain, pages, owner, sh)
@@ -237,6 +303,9 @@ def run_area(area, queue, quota, sh, ex, stats, limit=0):
     limit > 0 (test runs) stops after that many companies in this area."""
     rows, passed, idx = [], 0, 0
     while passed < quota and idx < len(queue) and not sh.time_up():
+        if sh.searcher.providers and sh.searcher.left() <= 0:
+            print("  search credits for today are used up: stopping this area")
+            break
         size = config.WORKERS * 2
         if limit:
             size = min(size, limit - len(rows))
