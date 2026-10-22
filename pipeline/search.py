@@ -90,6 +90,35 @@ class Searcher:
         res = self.search(f'{rec["company"]} {rec.get("city", "")} {rec["state"]} solar revenue employees')
         return self.sites_from(res), self.snippets(res)
 
+    def places(self, rec):
+        """Google Business Profile listings (Serper /places, 1 credit): website, phone, address, reviews.
+        Returns a list of dicts: title, address, phone, website, reviews."""
+        key = dict(self.providers).get("serper")
+        if not key:
+            return []
+        with self.lock:
+            if self.used >= self.cap:
+                return []
+            self.used += 1
+        try:
+            import requests
+            r = requests.post("https://google.serper.dev/places", timeout=15,
+                              headers={"X-API-KEY": key, "Content-Type": "application/json"},
+                              json={"q": f'{rec["company"]} {rec.get("city", "")} {rec["state"]}', "gl": "us"})
+            out = []
+            for x in r.json().get("places", []):
+                out.append({"title": x.get("title", ""), "address": x.get("address", ""),
+                            "phone": x.get("phoneNumber") or x.get("phone") or "",
+                            "website": x.get("website") or "", "reviews": x.get("ratingCount") or 0})
+            return out
+        except Exception:
+            return []
+
+    def owner_query(self, rec):
+        """Snippets that may name the owner (LinkedIn titles, directories, news). 1 credit."""
+        res = self.search(f'"{rec["company"]}" {rec.get("city", "")} {rec["state"]} owner OR founder OR president')
+        return self.snippets(res)
+
     def domain_emails(self, domain):
         """Emails for this domain that appear anywhere else on the web (1 credit)."""
         res = self.search(f'"@{domain}"')
