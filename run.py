@@ -232,11 +232,18 @@ def safe_process(rec, area, sh):
         return row
 
 
-def run_area(area, queue, quota, sh, ex, stats):
+def run_area(area, queue, quota, sh, ex, stats, limit=0):
+    """Work through one area in rank order until `quota` companies pass.
+    limit > 0 (test runs) stops after that many companies in this area."""
     rows, passed, idx = [], 0, 0
     while passed < quota and idx < len(queue) and not sh.time_up():
+        size = config.WORKERS * 2
+        if limit:
+            size = min(size, limit - len(rows))
+            if size <= 0:
+                break
         batch = []
-        while len(batch) < config.WORKERS * 2 and idx < len(queue):
+        while len(batch) < size and idx < len(queue):
             rec = queue[idx]
             idx += 1
             with sh.lock:
@@ -249,8 +256,6 @@ def run_area(area, queue, quota, sh, ex, stats):
             stats[row["Label"]] += 1
             if row["Label"] in ("green", "yellow"):
                 passed += 1
-            if config.LIMIT_COMPANIES and sum(stats.values()) >= config.LIMIT_COMPANIES:
-                return rows, passed
     return rows, passed
 
 
@@ -274,10 +279,11 @@ def main():
           f"search providers: {len(searcher.providers)} | queue sizes: "
           f"{ {a['id']: len(queues[a['id']]) for a in today} }")
     quota = config.TARGET_SENDABLE // len(today)
+    per_area_limit = -(-config.LIMIT_COMPANIES // len(today)) if config.LIMIT_COMPANIES else 0
     rows, stats, per_area = [], Counter(), []
     with ThreadPoolExecutor(config.WORKERS) as ex:
         for a in today:
-            r, p = run_area(a, queues[a["id"]], quota, sh, ex, stats)
+            r, p = run_area(a, queues[a["id"]], quota, sh, ex, stats, per_area_limit)
             rows += r
             per_area.append(f'{a["id"]} {p}/{quota}')
             print(f'  {a["id"]}: {p}/{quota} passed, {len(r)} researched, searches used {searcher.used}')
