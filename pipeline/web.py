@@ -24,18 +24,35 @@ def fetch(url, timeout=12, max_bytes=1_500_000):
         _last_hit[host] = slot
     if slot > now:
         time.sleep(slot - now)
-    try:
-        r = requests.get(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"},
-                         timeout=timeout, allow_redirects=True, stream=True)
-        if r.status_code >= 400:
+    headers = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9",
+               "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
+    for verify in (True, False):          # second try ignores a broken certificate (small business sites)
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True,
+                             stream=True, verify=verify)
+            if r.status_code >= 400:
+                return None
+            if "html" not in r.headers.get("Content-Type", "html").lower():
+                return None
+            data = r.raw.read(max_bytes, decode_content=True)
+            return data.decode(r.encoding or "utf-8", errors="replace")
+        except requests.exceptions.SSLError:
+            continue
+        except Exception:
             return None
-        if "html" not in r.headers.get("Content-Type", "html").lower():
-            return None
-        data = r.raw.read(max_bytes, decode_content=True)
-        enc = r.encoding or "utf-8"
-        return data.decode(enc, errors="replace")
-    except Exception:
-        return None
+    return None
+
+
+def fetch_any(url):
+    """Try https, then the www / non-www twin, then http. Returns (html, working_base_url) or (None, None)."""
+    p = urlparse(url if "//" in url else "https://" + url)
+    host = p.netloc
+    bare = host[4:] if host.startswith("www.") else host
+    for u in (f"https://{host}", f"https://www.{bare}" if host == bare else f"https://{bare}", f"http://{host}"):
+        html = fetch(u)
+        if html:
+            return html, u
+    return None, None
 
 
 def text_of(html):
@@ -95,8 +112,10 @@ _STOP = {"llc", "inc", "corp", "co", "ltd", "company", "the", "and", "of", "sola
          "power", "systems", "services", "electric", "electrical", "home", "group"}
 
 
-def identity(text, rec):
-    """What on the page proves it is THIS licensed company?"""
+def identity(text, rec, domain=""):
+    """What on the page proves it is THIS licensed company?
+    strong = license number or phone number on the page.
+    weak   = company name plus its city, ZIP or county, or the web address is the company name."""
     low = text.lower()
     alnum = re.sub(r"[^a-z0-9]", "", low)
     digits = re.sub(r"\D", "", text)
@@ -106,12 +125,23 @@ def identity(text, rec):
     phone_hit = len(ph) == 10 and ph in digits
     city = (rec.get("city") or "").lower()
     city_hit = bool(city) and city in low
+    zip_hit = bool(rec.get("zip")) and rec["zip"] in re.findall(r"\b\d{5}\b", text)
+    county = (rec.get("county") or "").lower()
+    county_hit = bool(county) and (county + " county") in low
     toks = [t for t in re.sub(r"[^a-z0-9 ]", " ", rec.get("company", "").lower()).split() if t not in _STOP]
     if not toks:
         toks = re.sub(r"[^a-z0-9 ]", " ", rec.get("company", "").lower()).split()
-    name_hit = bool(toks) and all(t in low for t in toks)
-    level = "strong" if (lic_hit or phone_hit) else ("weak" if (city_hit and name_hit) else "none")
-    return {"license": lic_hit, "phone": phone_hit, "city": city_hit, "name": name_hit, "level": level}
+    need = len(toks) if len(toks) < 3 else -(-2 * len(toks) // 3)       # 3+ words: two thirds must match
+    name_hit = bool(toks) and sum(1 for t in toks if t in low) >= need
+    base = re.sub(r"[^a-z0-9]", "", domain.lower().rsplit(".", 1)[0]) if domain else ""
+    full = re.sub(r"[^a-z0-9]", "", " ".join(t for t in re.sub(r"[^a-z0-9 ]", " ", rec.get("company", "").lower()).split()
+                                              if t not in {"llc", "inc", "corp", "co", "ltd", "company"}))
+    domain_hit = bool(base) and (base == full or (len(toks) >= 2 and all(t in base for t in toks)))
+    where = city_hit or zip_hit or county_hit
+    level = "strong" if (lic_hit or phone_hit) else (
+        "weak" if ((name_hit and where) or (domain_hit and "solar" in low)) else "none")
+    return {"license": lic_hit, "phone": phone_hit, "city": city_hit, "zip": zip_hit, "county": county_hit,
+            "name": name_hit, "domain": domain_hit, "level": level}
 
 
 # ---------------------------------------------------------------- pages
@@ -391,3 +421,31 @@ def wayback_pages(domain, max_pages=3):
         except Exception:
             continue
     return out
+
+
+# ---------------------------------------------------------------- v2.3: owner name and email patterns
+def email_patterns(owner, domain):
+    """Likely addresses for a known owner name. Only ever used if the mailbox is then VERIFIED."""
+    parts = [re.sub(r"[^a-z]", "", p.lower()) for p in owner.split()]
+    parts = [p for p in parts if p]
+    if len(parts) < 2 or not domain:
+        return []
+    f, l = parts[0], parts[-1]
+    pats = [f"{f}.{l}", f"{f}{l}", f"{f[0]}{l}", f, f"{f}_{l}", f"{f[0]}.{l}", f"{f}{l[0]}", l]
+    out, seen = [], set()
+    for p in pats:
+        if p not in seen and len(p) > 1:
+            seen.add(p)
+            out.append(f"{p}@{domain}")
+    return out
+
+
+def owner_from_snippets(snips, company):
+    """Owner or founder name from search result titles and snippets (LinkedIn titles, news, directories)."""
+    for sn in snips:
+        if not relevant(sn, company):
+            continue
+        name = extract_owner(sn)
+        if name:
+            return name
+    return ""
